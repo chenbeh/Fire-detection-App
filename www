@@ -1,0 +1,171 @@
+#!/usr/bin/env node
+
+/**
+ * Module dependencies.
+ */
+
+var app = require('../app');
+var debug = require('debug')('untitled:server');
+var http = require('http');
+
+/**
+ * Get port from environment and store in Express.
+ */
+
+var port = normalizePort(process.env.PORT || '3000');
+app.set('port', port);
+
+/**
+ * Create HTTP server.
+ */
+
+var server = http.createServer(app);
+
+/***************************************************************************************/
+var priorityTable = {
+    "El ghazela":{"El ghazela":null,"Ben arous":"1","Bizerte":"2"},
+    "Ben arous":{"El ghazela":"2","Ben arous":null,"Bizerte":"1"},
+    "Bizerte":{"El ghazela":"1","Ben arous":"2","Bizerte":null}
+};
+var ordreTable = ['El ghazela','Ben arous','Bizerte'];
+
+/*****************************************************************************************/
+var express = require('express');
+var router = express.Router();
+var mongoose = require('mongoose');
+var zone = require('../models/zoneSchema.js');
+var id_protection = require('../models/id_protectionSchema.js');
+var all_id_protection = require('../models/all_id_protectionSchema.js');
+var io = require('socket.io').listen(server);
+var active = 0;
+/*****************************************************************************************/
+/********************************************************************/
+io.sockets.on('connection', function (socket) {
+    console.log('Un client est connecté !');
+    active ++;
+    socket.emit('response', "you are connected");
+    socket.on('join', function (name) {
+        socket.name = name;
+    });
+    id_protection.findOneAndUpdate({ name: socket.name }, { name: socket.name }, function(err, user) {
+        socket.on('priority',function (priority) {
+            if (err) throw err;
+            if (user == null)
+            {
+                var user = id_protection({name: socket.name , priority : priority});
+                user.save(function(err) {
+                    if (err) throw err;
+                    console.log('User created!');
+                });
+            };
+        })
+
+    });
+    var prioritynow = null ;
+    var nodenow ;
+    var nodenext;
+    var priority = "1";
+    var master;
+    socket.on('elect',function(data){
+        nodenow = data["now"];
+        nodenext = data["next"];
+        console.log(nodenow);
+        prioritynow = data["mypriority"];
+        console.log(parseInt(prioritynow));
+        if( parseInt(prioritynow) <= active ){
+            if (parseInt(prioritynow) >= parseInt(priority)) {priority = prioritynow; master = nodenow;};
+            io.emit("elect",nodenext);
+
+            if (parseInt(priority) == active) {
+                console.log("resultat");
+                console.log(priority);
+                console.log(master);
+                io.emit("resultelect", master);
+            };
+        }
+    });
+
+    socket.on('disconnect',function(){
+        console.log('user disconnected '+ socket.name);
+        active -- ;
+        id_protection.findOneAndRemove({ name : socket.name }, function(err) {
+            if (err) throw err;
+            io.emit("disconnect", socket.name +' is disconnected');
+            io.emit("priorityTable",priorityTable[socket.name]);
+            console.log(priorityTable[socket.name]);
+            console.log('User deleted!');
+        });
+    });
+});
+/***********************************************************************/
+
+
+
+
+/**
+ * Listen on provided port, on all network interfaces.
+ */
+
+server.listen(port);
+server.on('error', onError);
+server.on('listening', onListening);
+
+/**
+ * Normalize a port into a number, string, or false.
+ */
+
+function normalizePort(val) {
+  var port = parseInt(val, 10);
+
+  if (isNaN(port)) {
+    // named pipe
+    return val;
+  }
+
+  if (port >= 0) {
+    // port number
+    return port;
+  }
+
+  return false;
+}
+
+/**
+ * Event listener for HTTP server "error" event.
+ */
+
+function onError(error) {
+  if (error.syscall !== 'listen') {
+    throw error;
+  }
+
+  var bind = typeof port === 'string'
+    ? 'Pipe ' + port
+    : 'Port ' + port;
+
+  // handle specific listen errors with friendly messages
+  switch (error.code) {
+    case 'EACCES':
+      console.error(bind + ' requires elevated privileges');
+      process.exit(1);
+      break;
+    case 'EADDRINUSE':
+      console.error(bind + ' is already in use');
+      process.exit(1);
+      break;
+    default:
+      throw error;
+  }
+}
+
+/**
+ * Event listener for HTTP server "listening" event.
+ */
+
+function onListening() {
+  var addr = server.address();
+  var bind = typeof addr === 'string'
+    ? 'pipe ' + addr
+    : 'port ' + addr.port;
+  debug('Listening on ' + bind);
+}
